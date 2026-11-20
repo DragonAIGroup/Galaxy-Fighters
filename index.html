@@ -28,9 +28,11 @@ const flights=(()=>{
  }
  return paths;
 })();
+// Arcade column offsets in half-steps, with the boss row on each outer edge.
+const formationSlots=[[-1,1],[-1,3],[1,1],[1,3],[-1,2],[-1,4],[1,2],[1,4],[-3,0],[-3,1],[-1,0],[3,1],[1,0],[-3,2],[3,0],[3,2],[7,1],[5,1],[7,2],[5,2],[-7,1],[-5,1],[-7,2],[-5,2],[5,3],[3,3],[5,4],[3,4],[-3,3],[-5,3],[-3,4],[-5,4],[-9,3],[-7,3],[-9,4],[-7,4],[7,3],[9,3],[7,4],[9,4]];
 function wave(s){
  s.wave++;s.waveAt=s.t;s.dive=3;s.enemyShot=2;
- s.foes=flights.map(([delay,family,points])=>({delay:delay/entryRate,points,r:family===1?0:family===2?1:2,x:-100,y:-100,code:14,flags:0,h:family===1?2:1,d:0,side:1,aim:0,ready:false}));
+ s.foes=flights.map(([delay,family,points],i)=>({slot:formationSlots[i],delay:delay/entryRate,points,r:family===1?0:family===2?1:2,x:-100,y:-100,code:14,flags:0,h:family===1?2:1,d:0,side:1,aim:0,ready:false}));
  place(s,0)
 }
 function fresh(){let s={effects:[],events:{},p:[{x:200,h:3,flash:0},{x:200,h:3,flash:0}],shots:[],foes:[],wave:0,t:0,cool:[0,0],enemyShot:1.6,dive:3,over:false,winner:-2};wave(s);return s}
@@ -127,7 +129,14 @@ function place(s,dt){
   let bx=arenaScale*(px+(next[0]-px)*mix),by=28+arenaScale*(py+(next[1]-py)*mix);
   e.code=e.points[index][2];e.flags=e.points[index][3]^1;
   e.ready=progress>=end;
-  if(e.ready){e.code=[14,22,30][e.r]+(Math.floor(s.t*4)%2);e.flags=0;const age=(progress-end)/entryRate;bx+=12*Math.sin(age*1.5);by+=3*Math.sin(age*1.2)}
+  // Keep the arcade loops, then guide their final approach into one shared grid.
+  const dock=Math.max(0,Math.min(1,1+(progress-end)/36));
+  const blend=dock*dock*(3-2*dock);
+  const centerX=200+12*Math.sin((s.t-s.waveAt)*1.5);
+  const dockX=centerX+14*e.slot[0],dockY=320-(4.5-e.slot[1])*24;
+  bx+=(dockX-arenaScale*e.points[end][0])*blend;
+  by+=(dockY-(28+arenaScale*e.points[end][1]))*blend;
+  if(e.ready){e.code=[14,22,30][e.r]+(Math.floor(s.t*4)%2);e.flags=0}
   if(e.d){e.d+=dt*.54;if(e.d>=1)e.d=0;const reach=Math.sin(Math.PI*e.d);e.x=bx+(e.aim-bx)*reach+32*Math.sin(2*Math.PI*e.d);e.y=by+(64-by)*reach;e.code=[8,16,24][e.r]+Math.min(6,Math.round(6*Math.abs(Math.cos(e.d*Math.PI))));e.flags=e.d<.5?1:0}
   else{e.x=bx;e.y=by}
  }
