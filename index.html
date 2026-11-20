@@ -1,6 +1,6 @@
 <!DOCTYPE html><html lang="en"><head><title>Galaxy Fighters</title><meta name="theme-color" content="#070b19"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><meta charset="utf-8"><style>
 *{box-sizing:border-box}body{margin:0;background:#060915;color:#f4f6ff;font:16px system-ui,sans-serif}main{position:absolute;inset:0;margin:auto;width:min(100vw,54.35vh);height:min(100vh,184vw);overflow:hidden;background:#090e20}canvas{width:100%;height:86.96%;touch-action:none;display:block}section{position:absolute;left:7%;right:7%;top:50%;transform:translateY(-50%);background:linear-gradient(150deg,#111e37fa,#0a1022fa);border:1px solid #314869;border-top:3px solid #5cf5e2;padding:6%;box-shadow:0 15px 55px #0008}small{color:#65e5d6;font: bold 12px monospace;letter-spacing:2px}h1{font:900 clamp(30px,8vw,56px)/.95 system-ui;margin:12px 0;letter-spacing:-2px}p{color:#bfccdf;font-size:15px;line-height:1.45;margin:12px 0 18px}button,input{width:100%;padding:12px 10px;margin:4px 0;border:1px solid #37486c;border-radius:4px;background:#1b2943;color:white;font:700 16px system-ui}button:first-of-type{color:#071921;background:#64ecda;border-color:#64ecda}input{background:#090e20;font-family:monospace}button:active{filter:brightness(1.3)}[hidden]{display:none}
-nav{height:13.04%;display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px;padding:7px 10px 10px;border-top:1px solid #2d405b;background:#10182b}nav button,nav button:first-of-type{margin:0;padding:0;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;color:#bee8f1;border:1px solid #38546a;background:#1b3045;font:800 16px monospace;letter-spacing:1px}nav button:last-child{color:#121924;background:#66e4d5}nav button.held{background:#efffff;color:#0b2031}nav[hidden]{display:none}textarea{width:100%;padding:8px;color:#fff;background:#091326;border:1px solid #476079;border-radius:4px;resize:vertical;height:48px;font:14px monospace}section{max-height:94%;overflow:auto}button{cursor:pointer}main{height:min(100dvh,184vw);width:min(100vw,54.35dvh)}</style></head><body><main><canvas width="400" height="640"></canvas><nav hidden aria-label="Flight controls"><button data-key="left" aria-label="Move left">◀ LEFT</button><button data-key="right" aria-label="Move right">RIGHT ▶</button><button data-key="fire">FIRE</button></nav><section></section></main><script>
+nav{height:13.04%;display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px;padding:7px 10px 10px;border-top:1px solid #2d405b;background:#10182b}nav button,nav button:first-of-type{margin:0;padding:0;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;color:#bee8f1;border:1px solid #38546a;background:#1b3045;font:800 16px monospace;letter-spacing:1px}nav button:last-child{color:#121924;background:#66e4d5}nav button.held{background:#efffff;color:#0b2031}nav[hidden]{display:none}textarea{width:100%;padding:8px;color:#fff;background:#091326;border:1px solid #476079;border-radius:4px;resize:vertical;height:48px;font:14px monospace}section{max-height:94%;overflow:auto}button{cursor:pointer}main{height:min(100dvh,184vw);width:min(100vw,54.35dvh)}.room-code{font:700 27px monospace;text-align:center;letter-spacing:.24em;color:#69efdc;margin:4px 0 12px}</style><script defer src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script></head><body><main><canvas width="400" height="640"></canvas><nav hidden aria-label="Flight controls"><button data-key="left" aria-label="Move left">◀ LEFT</button><button data-key="right" aria-label="Move right">RIGHT ▶</button><button data-key="fire">FIRE</button></nav><section></section></main><script>
 'use strict';
 const canvas=document.querySelector('canvas'),g=canvas.getContext('2d'),panel=document.querySelector('section');
 const cyan='#6cf0db',pink='#ff769d',gold='#ffcb64',limit=(n,a,b)=>Math.min(b,Math.max(a,n));
@@ -19,90 +19,78 @@ function wave(s){s.foes=[];for(let r=0;r<4;r++)for(let c=0;c<9;c++)s.foes.push({
 function fresh(){let s={p:[{x:200,h:3,flash:0},{x:200,h:3,flash:0}],shots:[],foes:[],wave:0,t:0,cool:[0,0],enemyShot:1.6,dive:3,over:false,winner:-2};wave(s);return s}
 function start(){mode='play';panel.hidden=true;pad.hidden=false;clearControls();peerFire=false;trigger=peerTrigger=0;queued=peerQueued=false;state=fresh();local=peer=200;acc=0;tick=0;seq=0;inputSeq=-1;started=performance.now()}
 function solo(){role='ai';start()}
-let connection=null,channel=null,inbox=[],connectionTimer;
+let broker=null,channel=null,inbox=[],connectionTimer;
+const roomPrefix='dragonai-galaxy-fighters-v1-';
+const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function roomCode(){
+  return Array.from(crypto.getRandomValues(new Uint8Array(6)),n=>alphabet[n%alphabet.length]).join('');
+}
 const Net={
   recv(){return inbox.shift()},
-  send(message){if(channel?.readyState==='open'&&channel.bufferedAmount<32768)channel.send(message)},
-  stop(){clearTimeout(connectionTimer);const old=connection;connection=null;channel=null;inbox=[];old?.close()}
+  send(message){if(channel?.open&&channel.dataChannel.bufferedAmount<32768)channel.send(message)},
+  stop(){clearTimeout(connectionTimer);const old=broker;broker=null;channel=null;inbox=[];old?.destroy()}
 };
 function lobbyError(message){
+  const joining=role==='guest';
   Net.stop();role='';mode='menu';session='';
-  menu('Duel setup',message,[['Main menu',home]]);
+  menu('Duel setup',message,joining?[['Enter another code',()=>joinForm()],['Main menu',home]]:[['Try again',host],['Main menu',home]]);
 }
-function prepare(side){
-  close();state=null;role=side;session='';mode='setup';
-  const pc=new RTCPeerConnection({iceServers:[]});
-  connection=pc;
-  pc.ondatachannel=e=>attach(pc,e.channel);
-  pc.onconnectionstatechange=()=>{
-    if(connection===pc&&pc.connectionState==='failed'&&mode!=='done')lobbyError('Connection failed. Connect both devices to the same Wi-Fi and try again.');
-  };
-  return pc;
+function watchRoom(message){
+  clearTimeout(connectionTimer);
+  connectionTimer=setTimeout(()=>lobbyError(message),25000);
 }
-function attach(pc,dc){
-  channel=dc;
-  dc.onmessage=e=>{if(connection===pc&&typeof e.data==='string'&&e.data.length<16384&&inbox.length<100)inbox.push(e.data)};
-  dc.onopen=()=>{
-    if(connection!==pc)return;
+function attachRoom(peer,link){
+  channel=link;
+  watchRoom('The pilots could not connect. Try again on the same Wi-Fi.');
+  link.on('data',data=>{if(broker===peer&&typeof data==='string'&&data.length<16384&&inbox.length<100)inbox.push(data)});
+  link.on('open',()=>{
+    if(broker!==peer)return;
     clearTimeout(connectionTimer);mode=role==='host'?'wait':'dial';
     nonce=Math.random().toString(36).slice(2);lastRx=performance.now();lastTx=0;
     menu('Pilots connected','Starting the duel…',[['Cancel',home]]);
-  };
-  dc.onclose=()=>{if(connection===pc&&mode!=='done')lobbyError('The other pilot disconnected.')};
-}
-async function makeCode(pc,desc){
-  await pc.setLocalDescription(desc);
-  if(pc.iceGatheringState!=='complete')await new Promise(resolve=>{
-    const finish=()=>{clearTimeout(timer);pc.removeEventListener('icegatheringstatechange',changed);resolve()};
-    const changed=()=>{if(pc.iceGatheringState==='complete')finish()};
-    const timer=setTimeout(finish,5000);pc.addEventListener('icegatheringstatechange',changed);changed();
   });
-  if(!pc.localDescription.sdp.includes('a=candidate:'))throw Error('No network candidates');
-  return 'GF1-'+btoa(JSON.stringify(pc.localDescription.toJSON()));
+  const lost=()=>{if(broker===peer&&mode!=='done')lobbyError('The other pilot disconnected.')};
+  link.on('close',lost);link.on('error',lost);
 }
-function readCode(value,type){
-  if(value.length>80000||!value.startsWith('GF1-'))throw Error();
-  const d=JSON.parse(atob(value.slice(4)));
-  if(d.type!==type||typeof d.sdp!=='string')throw Error();
-  return {type,sdp:d.sdp};
+function connectRoom(side,code,retries=0){
+  close();state=null;role=side;session='';mode='setup';
+  menu(side==='host'?'Create duel':'Join duel',side==='host'?'Getting your room code…':'Connecting to room '+code+'…',[['Cancel',home]]);
+  if(!window.Peer){lobbyError('The multiplayer service could not load. Refresh the page and try again.');return}
+  let peer;
+  try{peer=side==='host'?new Peer(roomPrefix+code):new Peer()}catch{lobbyError('This browser could not start multiplayer.');return}
+  broker=peer;watchRoom('The room service did not respond. Check your internet connection and try again.');
+  peer.on('error',err=>{
+    if(broker!==peer)return;
+    if(side==='host'&&err.type==='unavailable-id'&&retries<5){connectRoom(side,roomCode(),retries+1);return}
+    if(channel?.open&&err.type==='network')return;
+    lobbyError(err.type==='peer-unavailable'?'That room could not be found. Check the code and make sure the host is still waiting.':'Could not connect to the duel. Check your connection and try again.');
+  });
+  peer.on('connection',link=>{
+    if(broker!==peer||side!=='host'||channel||link.label!=='galaxy-fighters'){link.on('open',()=>link.close());return}
+    attachRoom(peer,link);
+  });
+  peer.on('disconnected',()=>{if(broker===peer&&!channel?.open)lobbyError('The room service disconnected. Please try again.')});
+  peer.on('open',()=>{
+    if(broker!==peer)return;
+    clearTimeout(connectionTimer);
+    if(side==='guest'){attachRoom(peer,peer.connect(roomPrefix+code,{label:'galaxy-fighters',reliable:true,serialization:'json'}));return}
+    menu('Host duel','Share this room code with the other pilot. The duel starts when they join.',[
+      ['Copy code',async()=>{try{await navigator.clipboard.writeText(code);if(broker===peer&&mode==='setup')panel.querySelector('p').textContent='Code copied. Waiting for the other pilot…'}catch{display.focus();display.select()}}],
+      ['Cancel',home]]);
+    const display=codeField();display.value=code;display.readOnly=true;
+  });
 }
-function field(label,value=''){
-  const box=document.createElement('textarea');box.placeholder=label;box.setAttribute('aria-label',label);
-  box.value=value;box.readOnly=!!value;box.spellcheck=false;panel.insertBefore(box,panel.querySelector('button'));return box;
+function codeField(){
+  const field=document.createElement('input');
+  field.setAttribute('aria-label','Room code');field.maxLength=6;field.autocomplete='off';field.autocapitalize='characters';field.spellcheck=false;field.placeholder='ABC234';field.className='room-code';
+  panel.insertBefore(field,panel.querySelector('button'));return field;
 }
-async function copy(box){
-  try{await navigator.clipboard.writeText(box.value);panel.querySelector('p').textContent='Code copied. Send it to the other pilot.'}
-  catch{box.focus();box.select();panel.querySelector('p').textContent='The code is selected. Use Copy and send it to the other pilot.'}
-}
-function watch(pc){
-  clearTimeout(connectionTimer);
-  connectionTimer=setTimeout(()=>{if(connection===pc&&channel?.readyState!=='open')lobbyError('The devices could not connect. Try the same Wi-Fi network and create a fresh invitation.')},45000);
-}
-async function host(){
-  let pc;
-  try{
-    pc=prepare('host');menu('Create duel','Preparing your invitation…',[['Cancel',home]]);
-    attach(pc,pc.createDataChannel('galaxy-fighters'));
-    const invitation=await makeCode(pc,await pc.createOffer());if(connection!==pc)return;
-    menu('Host duel','Send your invitation to the other pilot. Paste their reply below to launch.',[
-      ['Copy invitation',()=>copy(out)],['Launch duel',async()=>{
-        try{await pc.setRemoteDescription(readCode(reply.value.trim(),'answer'));if(connection!==pc)return;if(channel?.readyState!=='open'){menu('Connecting','Linking both fighters…',[['Cancel',home]]);watch(pc)}}
-        catch{if(connection===pc)panel.querySelector('p').textContent='Paste the reply generated by the pilot who joined this invitation.'}
-      }],['Cancel',home]]);
-    const out=field('Your invitation',invitation),reply=field('Paste the other pilot’s reply');
-  }catch{if(!pc||connection===pc)lobbyError('This browser could not create a duel. Open the site in a current browser on Wi-Fi.')}
-}
+function host(){connectRoom('host',roomCode())}
 function joinForm(){
-  mode='setup';menu('Join duel','Paste the invitation from the host.',[['Create reply',async()=>{
-    let offer,pc;
-    try{offer=readCode(input.value.trim(),'offer')}catch{panel.querySelector('p').textContent='Paste a complete Galaxy Fighters invitation.';return}
-    try{
-      pc=prepare('guest');menu('Join duel','Preparing your reply…',[['Cancel',home]]);
-      await pc.setRemoteDescription(offer);const answer=await makeCode(pc,await pc.createAnswer());if(connection!==pc)return;
-      menu('Send your reply','Send this reply to the host. Keep this screen open until they launch the duel.',[['Copy reply',()=>copy(out)],['Cancel',home]]);
-      const out=field('Your reply',answer);
-    }catch{if(!pc||connection===pc)lobbyError('Could not join. Ask the host for a fresh invitation and try again.')}
-  }],['Cancel',home]]);const input=field('Paste invitation');
+  mode='setup';
+  function enter(){const code=input.value.trim().toUpperCase();if(!/^[A-Z0-9]{6}$/.test(code)){panel.querySelector('p').textContent='Enter all six letters or numbers from the host.';input.focus();return}connectRoom('guest',code)}
+  menu('Join duel','Enter the host’s six-character room code.',[['Join game',enter],['Cancel',home]]);
+  const input=codeField();input.oninput=()=>input.value=input.value.toUpperCase();input.onkeydown=e=>{if(e.key==='Enter')enter()};input.focus();
 }
 function ended(title,copy){mode='done';panel.hidden=false;menu(title,copy,role==='ai'?[['Play again',solo],['Main menu',home]]:[['Main menu',home]])}
 function result(){const me=role==='guest'?1:0;let w=state.winner;ended(w===-1?'Draw':w===me?'Victory':'Defeat',w===-1?'Both fighters fell on the same volley.':w===me?'Your fighter survived the duel.':'The opposing pilot survived the duel.')}
