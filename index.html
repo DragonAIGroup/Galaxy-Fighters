@@ -1,0 +1,133 @@
+<!DOCTYPE html><html lang="en"><head><title>Galaxy Fighters</title><meta name="theme-color" content="#070b19"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><meta charset="utf-8"><style>
+*{box-sizing:border-box}body{margin:0;background:#060915;color:#f4f6ff;font:16px system-ui,sans-serif}main{position:absolute;inset:0;margin:auto;width:min(100vw,54.35vh);height:min(100vh,184vw);overflow:hidden;background:#090e20}canvas{width:100%;height:86.96%;touch-action:none;display:block}section{position:absolute;left:7%;right:7%;top:50%;transform:translateY(-50%);background:linear-gradient(150deg,#111e37fa,#0a1022fa);border:1px solid #314869;border-top:3px solid #5cf5e2;padding:6%;box-shadow:0 15px 55px #0008}small{color:#65e5d6;font: bold 12px monospace;letter-spacing:2px}h1{font:900 clamp(30px,8vw,56px)/.95 system-ui;margin:12px 0;letter-spacing:-2px}p{color:#bfccdf;font-size:15px;line-height:1.45;margin:12px 0 18px}button,input{width:100%;padding:12px 10px;margin:4px 0;border:1px solid #37486c;border-radius:4px;background:#1b2943;color:white;font:700 16px system-ui}button:first-of-type{color:#071921;background:#64ecda;border-color:#64ecda}input{background:#090e20;font-family:monospace}button:active{filter:brightness(1.3)}[hidden]{display:none}
+nav{height:13.04%;display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px;padding:7px 10px 10px;border-top:1px solid #2d405b;background:#10182b}nav button,nav button:first-of-type{margin:0;padding:0;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;color:#bee8f1;border:1px solid #38546a;background:#1b3045;font:800 16px monospace;letter-spacing:1px}nav button:last-child{color:#121924;background:#66e4d5}nav button.held{background:#efffff;color:#0b2031}nav[hidden]{display:none}textarea{width:100%;padding:8px;color:#fff;background:#091326;border:1px solid #476079;border-radius:4px;resize:vertical;height:48px;font:14px monospace}section{max-height:94%;overflow:auto}button{cursor:pointer}main{height:min(100dvh,184vw);width:min(100vw,54.35dvh)}</style></head><body><main><canvas width="400" height="640"></canvas><nav hidden aria-label="Flight controls"><button data-key="left" aria-label="Move left">◀ LEFT</button><button data-key="right" aria-label="Move right">RIGHT ▶</button><button data-key="fire">FIRE</button></nav><section></section></main><script>
+'use strict';
+const canvas=document.querySelector('canvas'),g=canvas.getContext('2d'),panel=document.querySelector('section');
+const cyan='#6cf0db',pink='#ff769d',gold='#ffcb64',limit=(n,a,b)=>Math.min(b,Math.max(a,n));
+let firing=false,peerFire=false,trigger=0,peerTrigger=0,queued=false,peerQueued=false;const held=new Map(),pad=document.querySelector('nav');
+let mode='menu',role='',state,local=200,peer=200,session='',nonce='',lastRx=0,lastTx=0,seq=0,inputSeq=-1,tick=0,acc=0,last=0,clock=0,status='',started=0;
+const sprites={ship:['0001000','0001000','0012100','1012101','1123211','1011101','0002000'],moth:['100000001','010101010','112222211','033232330','001111100','010000010'],bee:['0100010','1011101','0123210','1122211','0101010','1000001'],boss:['110000011','011222110','112333211','123232321','112222211','010101010','100000001']};
+const stars=Array.from({length:95},(_,i)=>[(i*163+13)%400,(i*283+19)%640,1+i%3]);
+function sprite(key,x,y,size,colors,flip=false){let s=sprites[key];g.save();g.translate(Math.round(x),Math.round(y));if(flip)g.rotate(Math.PI);s.forEach((row,j)=>[...row].forEach((v,i)=>{if(v!=='0'){g.fillStyle=colors[v-1];g.fillRect((i-row.length/2)*size,(j-s.length/2)*size,size+.15,size+.15)}}));g.restore()}
+function menu(title,copy,buttons){panel.hidden=false;pad.hidden=true;clearControls();panel.replaceChildren();let small=document.createElement('small');small.textContent='GALAXY FIGHTERS';if(title!=='Galaxy Fighters')panel.append(small);let h=document.createElement('h1');h.textContent=title;panel.append(h);let p=document.createElement('p');p.textContent=copy;panel.append(p);for(let [label,fn] of buttons){let b=document.createElement('button');b.textContent=label;b.onclick=()=>{unlock();fn()};panel.append(b)}}
+let audio;function unlock(){try{audio??=new AudioContext();audio.resume()}catch(e){}}
+function tone(hz,d=.06){if(!audio||audio.state!=='running')return;let o=audio.createOscillator(),v=audio.createGain();o.type='square';o.frequency.value=hz;v.gain.setValueAtTime(.027,audio.currentTime);v.gain.exponentialRampToValueAtTime(.001,audio.currentTime+d);o.connect(v);v.connect(audio.destination);o.start();o.stop(audio.currentTime+d)}
+function send(msg){try{Net.send(JSON.stringify(msg))}catch(e){}}
+function close(){try{Net.stop()}catch(e){}}
+function home(){if(role&&session)send(['leave',session]);close();mode='menu';role='';state=null;menu('Galaxy Fighters','Shoot through the swarm and outlast your rival. Use the touch panel or steer with ← → and hold Space to fire.',[['Solo vs AI',solo],['Host duel',host],['Join duel',()=>joinForm()]])}
+function wave(s){s.foes=[];for(let r=0;r<4;r++)for(let c=0;c<9;c++)s.foes.push({c,r,x:0,y:0,h:r===1||r===2?1:2,d:0,side:1,aim:0});s.wave++;s.dive=2.6;s.enemyShot=1.6;place(s,0)}
+function fresh(){let s={p:[{x:200,h:3,flash:0},{x:200,h:3,flash:0}],shots:[],foes:[],wave:0,t:0,cool:[0,0],enemyShot:1.6,dive:3,over:false,winner:-2};wave(s);return s}
+function start(){mode='play';panel.hidden=true;pad.hidden=false;clearControls();peerFire=false;trigger=peerTrigger=0;queued=peerQueued=false;state=fresh();local=peer=200;acc=0;tick=0;seq=0;inputSeq=-1;started=performance.now()}
+function solo(){role='ai';start()}
+let connection=null,channel=null,inbox=[],connectionTimer;
+const Net={
+  recv(){return inbox.shift()},
+  send(message){if(channel?.readyState==='open'&&channel.bufferedAmount<32768)channel.send(message)},
+  stop(){clearTimeout(connectionTimer);const old=connection;connection=null;channel=null;inbox=[];old?.close()}
+};
+function lobbyError(message){
+  Net.stop();role='';mode='menu';session='';
+  menu('Duel setup',message,[['Main menu',home]]);
+}
+function prepare(side){
+  close();state=null;role=side;session='';mode='setup';
+  const pc=new RTCPeerConnection({iceServers:[]});
+  connection=pc;
+  pc.ondatachannel=e=>attach(pc,e.channel);
+  pc.onconnectionstatechange=()=>{
+    if(connection===pc&&pc.connectionState==='failed'&&mode!=='done')lobbyError('Connection failed. Connect both devices to the same Wi-Fi and try again.');
+  };
+  return pc;
+}
+function attach(pc,dc){
+  channel=dc;
+  dc.onmessage=e=>{if(connection===pc&&typeof e.data==='string'&&e.data.length<16384&&inbox.length<100)inbox.push(e.data)};
+  dc.onopen=()=>{
+    if(connection!==pc)return;
+    clearTimeout(connectionTimer);mode=role==='host'?'wait':'dial';
+    nonce=Math.random().toString(36).slice(2);lastRx=performance.now();lastTx=0;
+    menu('Pilots connected','Starting the duel…',[['Cancel',home]]);
+  };
+  dc.onclose=()=>{if(connection===pc&&mode!=='done')lobbyError('The other pilot disconnected.')};
+}
+async function makeCode(pc,desc){
+  await pc.setLocalDescription(desc);
+  if(pc.iceGatheringState!=='complete')await new Promise(resolve=>{
+    const finish=()=>{clearTimeout(timer);pc.removeEventListener('icegatheringstatechange',changed);resolve()};
+    const changed=()=>{if(pc.iceGatheringState==='complete')finish()};
+    const timer=setTimeout(finish,5000);pc.addEventListener('icegatheringstatechange',changed);changed();
+  });
+  if(!pc.localDescription.sdp.includes('a=candidate:'))throw Error('No network candidates');
+  return 'GF1-'+btoa(JSON.stringify(pc.localDescription.toJSON()));
+}
+function readCode(value,type){
+  if(value.length>80000||!value.startsWith('GF1-'))throw Error();
+  const d=JSON.parse(atob(value.slice(4)));
+  if(d.type!==type||typeof d.sdp!=='string')throw Error();
+  return {type,sdp:d.sdp};
+}
+function field(label,value=''){
+  const box=document.createElement('textarea');box.placeholder=label;box.setAttribute('aria-label',label);
+  box.value=value;box.readOnly=!!value;box.spellcheck=false;panel.insertBefore(box,panel.querySelector('button'));return box;
+}
+async function copy(box){
+  try{await navigator.clipboard.writeText(box.value);panel.querySelector('p').textContent='Code copied. Send it to the other pilot.'}
+  catch{box.focus();box.select();panel.querySelector('p').textContent='The code is selected. Use Copy and send it to the other pilot.'}
+}
+function watch(pc){
+  clearTimeout(connectionTimer);
+  connectionTimer=setTimeout(()=>{if(connection===pc&&channel?.readyState!=='open')lobbyError('The devices could not connect. Try the same Wi-Fi network and create a fresh invitation.')},45000);
+}
+async function host(){
+  let pc;
+  try{
+    pc=prepare('host');menu('Create duel','Preparing your invitation…',[['Cancel',home]]);
+    attach(pc,pc.createDataChannel('galaxy-fighters'));
+    const invitation=await makeCode(pc,await pc.createOffer());if(connection!==pc)return;
+    menu('Host duel','Send your invitation to the other pilot. Paste their reply below to launch.',[
+      ['Copy invitation',()=>copy(out)],['Launch duel',async()=>{
+        try{await pc.setRemoteDescription(readCode(reply.value.trim(),'answer'));if(connection!==pc)return;if(channel?.readyState!=='open'){menu('Connecting','Linking both fighters…',[['Cancel',home]]);watch(pc)}}
+        catch{if(connection===pc)panel.querySelector('p').textContent='Paste the reply generated by the pilot who joined this invitation.'}
+      }],['Cancel',home]]);
+    const out=field('Your invitation',invitation),reply=field('Paste the other pilot’s reply');
+  }catch{if(!pc||connection===pc)lobbyError('This browser could not create a duel. Open the site in a current browser on Wi-Fi.')}
+}
+function joinForm(){
+  mode='setup';menu('Join duel','Paste the invitation from the host.',[['Create reply',async()=>{
+    let offer,pc;
+    try{offer=readCode(input.value.trim(),'offer')}catch{panel.querySelector('p').textContent='Paste a complete Galaxy Fighters invitation.';return}
+    try{
+      pc=prepare('guest');menu('Join duel','Preparing your reply…',[['Cancel',home]]);
+      await pc.setRemoteDescription(offer);const answer=await makeCode(pc,await pc.createAnswer());if(connection!==pc)return;
+      menu('Send your reply','Send this reply to the host. Keep this screen open until they launch the duel.',[['Copy reply',()=>copy(out)],['Cancel',home]]);
+      const out=field('Your reply',answer);
+    }catch{if(!pc||connection===pc)lobbyError('Could not join. Ask the host for a fresh invitation and try again.')}
+  }],['Cancel',home]]);const input=field('Paste invitation');
+}
+function ended(title,copy){mode='done';panel.hidden=false;menu(title,copy,role==='ai'?[['Play again',solo],['Main menu',home]]:[['Main menu',home]])}
+function result(){const me=role==='guest'?1:0;let w=state.winner;ended(w===-1?'Draw':w===me?'Victory':'Defeat',w===-1?'Both fighters fell on the same volley.':w===me?'Your fighter survived the duel.':'The opposing pilot survived the duel.')}
+function place(s,dt){for(let e of s.foes){let bx=56+36*e.c+22*Math.sin(s.t*1.65),by=269+33*e.r+7*Math.sin(s.t*2+e.c*.4);if(e.d){e.d+=dt*.54;if(e.d>=1){e.d=0;e.x=bx;e.y=by;continue}let a=Math.sin(Math.PI*e.d);e.x=bx+(e.aim-bx)*a+32*Math.sin(2*Math.PI*e.d);e.y=by+(e.side===1?576-by:64-by)*a}else{e.x=bx;e.y=by}}}
+function hurt(p){if(p.flash<=0&&p.h>0){p.h--;p.flash=.64;tone(115,.13)}}
+function aiTarget(s){let p=s.p[1],danger=s.shots.filter(b=>b.v<0&&b.y>64&&b.y<205&&Math.abs(b.x-p.x)<26).sort((a,b)=>a.y-b.y)[0];if(danger)return limit(danger.x+(p.x>danger.x?1:p.x<danger.x?-1:p.x<200?1:-1)*46,18,382);return limit(s.p[0].x+Math.sin(s.t*2.3)*47,18,382)}
+function step(s,dt){if(s.over)return;s.t+=dt;const aims=[local,role==='ai'?aiTarget(s):peer];s.p.forEach((p,i)=>{let speed=i&&role==='ai'?174:310;p.x+=limit(aims[i]-p.x,-speed*dt,speed*dt);p.flash=Math.max(0,p.flash-dt)});for(let i=0;i<2;i++){s.cool[i]=Math.max(0,s.cool[i]-dt);let wants=i?(role==='ai'||peerFire||peerQueued):(firing||queued);if(wants&&s.cool[i]<=0){s.shots.push({x:s.p[i].x,y:i?83:557,v:i?355:-355,o:i});s.cool[i]=.18;if(i)peerQueued=false;else queued=false}}
+place(s,dt);s.enemyShot-=dt;s.dive-=dt;if(s.foes.length){if(s.enemyShot<=0){s.enemyShot=Math.max(.38,1.12-.07*s.wave);let e=s.foes[Math.floor(Math.random()*s.foes.length)];s.shots.push({x:e.x,y:e.y,v:155,o:2},{x:e.x,y:e.y,v:-155,o:2})}if(s.dive<=0){s.dive=Math.max(1.1,3-.12*s.wave);let f=s.foes.filter(e=>!e.d);if(f.length){let e=f[Math.floor(Math.random()*f.length)];e.side=Math.random()<.5?1:-1;e.aim=s.p[e.side===1?0:1].x;e.d=.001}}}
+for(const e of s.foes)for(let i=0;i<2;i++)if(Math.abs(e.x-s.p[i].x)<16&&Math.abs(e.y-(i?64:576))<14)hurt(s.p[i]);
+s.shots=s.shots.filter(b=>{b.y+=b.v*dt;if(b.y<43||b.y>598)return false;if(b.o<2){let e=s.foes.find(e=>e.h>0&&Math.abs(e.x-b.x)<12&&Math.abs(e.y-b.y)<11);if(e){e.h--;return false}}let i=b.v>0?0:1;if(Math.abs(b.y-(i?64:576))<11&&Math.abs(b.x-s.p[i].x)<11){hurt(s.p[i]);return false}return true});s.foes=s.foes.filter(e=>e.h>0);if(s.p.some(p=>!p.h)){s.over=true;s.winner=s.p[0].h?s.p[1].h?-1:0:s.p[1].h?1:-1}else if(!s.foes.length)wave(s)}
+function snapshot(){return [state.p,state.wave,state.over,state.winner,state.foes.map(e=>[Math.round(e.x),Math.round(e.y),e.r,e.d&&e.side<0?1:0]),state.shots.map(b=>[Math.round(b.x),Math.round(b.y),b.o])]}
+function restore(a){return {p:a[0],wave:a[1],over:a[2],winner:a[3],foes:a[4].map(([x,y,r,d])=>({x,y,r,d,side:-1})),shots:a[5].map(([x,y,o])=>({x,y,o}))}}
+function packet(now){for(let k=0;k<6;k++){let raw=Net.recv();if(!raw)break;let m;try{m=JSON.parse(raw)}catch(e){continue}if(!Array.isArray(m))continue;
+if(role==='host'&&mode==='wait'&&m[0]==='hello'&&typeof m[1]==='string'){nonce=m[1];session=Math.random().toString(36).slice(2);lastRx=now;start()}
+if(role==='guest'&&m[0]==='s'&&m[1]===nonce&&(mode==='dial'||mode==='play')&&(!session||session===m[2])){if(mode==='dial'){start();session=m[2];tick=-1}if(m[3]>tick){tick=m[3];state=restore(m[4]);lastRx=now;if(state.over)result()}}
+if(m[1]===session&&session){if(m[0]==='i'&&role==='host'&&m[2]>inputSeq&&Number.isFinite(m[3])){peer=limit(m[3],18,382);peerFire=m[4]===true;if(Number.isInteger(m[5])&&m[5]>peerTrigger){peerTrigger=m[5];peerQueued=true}inputSeq=m[2];lastRx=now}if(m[0]==='leave'&&mode==='play'){ended('Pilot left','Your opponent left the match.');return}}}
+if(now-lastTx>50){lastTx=now;if(mode==='dial')send(['hello',nonce]);if(role==='guest'&&mode==='play')send(['i',session,++seq,local,firing,trigger]);if(role==='host'&&state&&(mode==='play'||state.over))send(['s',nonce,session,++tick,snapshot()])}if((mode==='dial'||mode==='play')&&now-lastRx>9000){close();ended('Link lost','Check that both phones share a Wi-Fi network and start a new duel.')}}
+function draw(){g.fillStyle='#070b19';g.fillRect(0,0,400,640);for(let [x,y,z] of stars){g.fillStyle=['','#334059','#677392','#a7c8e2'][z];g.fillRect(x,(y+clock*z*4)%640,z===3?2:1,2)}if(!state){for(let i=0;i<5;i++){let y=86+14*Math.sin(i*.75+clock*1.4);sprite(i===2?'boss':'bee',88+i*56,y,3,i===2?['#4389cc',cyan,'#fe9fb8']:['#893e82',pink,gold])}sprite('ship',200+40*Math.sin(clock*.8),551,4,[cyan,'#f1f5ff',gold]);return}let s=state,rev=role==='guest',me=rev?1:0;g.save();if(rev){g.translate(400,640);g.rotate(Math.PI)}g.strokeStyle='#1d2841';g.setLineDash([3,9]);g.beginPath();g.moveTo(8,320);g.lineTo(392,320);g.stroke();g.setLineDash([]);for(let e of s.foes)sprite(e.r===0||e.r===3?'boss':e.r===1?'bee':'moth',e.x,e.y,2.6,e.r===1?['#ed8a40',gold,'#ffecd3']:e.r===2?['#aa5bf4','#ed92ff','#fff2ff']:['#3989cb','#5ed9ff','#fc92bc'],e.side<0&&!!e.d);for(let b of s.shots){g.fillStyle=b.o===2?gold:b.o===me?cyan:pink;g.fillRect(b.x-2,b.y-5,4,10)}s.p.forEach((p,i)=>{if(p.h&&(!p.flash||Math.floor(p.flash*15)%2===0))sprite('ship',p.x,i?64:576,3.5,[i===me?cyan:pink,'#e6f5ff',gold],!!i)});g.restore();for(let i=0;i<2;i++){let y=i?620:25,p=s.p[i?me:1-me];g.fillStyle=i?cyan:pink;g.font='bold 14px monospace';g.fillText(i?'YOU':role==='ai'?'CPU':'RIVAL',16,y);for(let j=0;j<3;j++){g.fillStyle=j<p.h?(i?cyan:pink):'#2c3349';g.fillRect(74+j*18,y-9,13,7)}}g.fillStyle='#c0cbe0';g.textAlign='right';g.fillText('WAVE '+String(s.wave).padStart(2,'0'),384,25);g.fillText('RAPID FIRE',384,620);g.textAlign='left'}
+function refreshControls(){const keys=new Set(held.values());firing=keys.has('fire');for(const b of pad.querySelectorAll('button'))b.classList.toggle('held',keys.has(b.dataset.key))}
+function clearControls(){held.clear();refreshControls()}
+for(const b of pad.querySelectorAll('button')){b.onpointerdown=e=>{if(mode!=='play')return;e.preventDefault();b.setPointerCapture(e.pointerId);if(b.dataset.key==='fire'){trigger++;queued=true}held.set(e.pointerId,b.dataset.key);refreshControls()};b.onpointerup=b.onpointercancel=b.onlostpointercapture=e=>{held.delete(e.pointerId);refreshControls()};b.oncontextmenu=e=>e.preventDefault()}
+window.addEventListener('blur',clearControls);document.addEventListener('visibilitychange',()=>{if(document.hidden)clearControls()})
+function steer(dt){let keys=new Set(held.values()),direction=Number(keys.has('right'))-Number(keys.has('left'));local=limit(local+direction*(role==='guest'?-1:1)*305*dt,18,382)}
+const keyMap={ArrowLeft:'left',ArrowRight:'right',Space:'fire'};
+window.addEventListener('keydown',e=>{if(mode!=='play'||!keyMap[e.code])return;e.preventDefault();if(held.has(e.code))return;held.set(e.code,keyMap[e.code]);if(e.code==='Space'){trigger++;queued=true}refreshControls()});
+window.addEventListener('keyup',e=>{if(held.delete(e.code)){e.preventDefault();refreshControls()}});
+function frame(now){let dt=Math.min(.1,(now-last)/1000);last=now;clock+=dt;if(mode==='play')steer(dt);if((role==='host'||role==='guest')&&mode!=='menu')packet(now);if(mode==='play'&&role!=='guest'){acc+=dt;while(acc>=1/60){step(state,1/60);acc-=1/60}if(state.over){if(role==='host')send(['s',nonce,session,++tick,snapshot()]);result()}}draw();requestAnimationFrame(frame)}home();requestAnimationFrame(frame)
+</script></body></html>
